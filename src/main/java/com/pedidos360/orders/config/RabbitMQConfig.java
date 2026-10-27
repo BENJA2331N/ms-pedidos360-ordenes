@@ -7,6 +7,21 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * Configuración de RabbitMQ del dominio "órdenes". Todos los nombres se leen de application.yml
+ * (app.rabbitmq.ordenes.*); aquí solo se declaran los beans, sin lógica de negocio.
+ *
+ * <pre>
+ * Caso de uso: notificación / ticket de orden (creación y cambio de estado)
+ *
+ *   OrderEventProducer --routing-key--> [ordenes.exchange (direct)] --binding--> [ordenes.notificaciones.queue]
+ *                                                                                  |  (NACK sin requeue / rechazo)
+ *                                                                                  v  x-dead-letter-exchange + routing key
+ *                                       [ordenes.dlx (direct)] --binding--> [ordenes.notificaciones.dlq]
+ *
+ *   Consumidor: OrderNotificationConsumer (cola principal con ACK manual y listener de la DLQ con logs)
+ * </pre>
+ */
 @Configuration
 public class RabbitMQConfig {
 
