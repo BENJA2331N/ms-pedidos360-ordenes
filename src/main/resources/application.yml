@@ -1,0 +1,49 @@
+server:
+  port: ${SERVER_PORT:8082}
+  address: 0.0.0.0
+  forward-headers-strategy: framework
+
+spring:
+  application:
+    name: ms-pedidos360-ordenes
+  # Base de datos Oracle (la misma que usaba application.properties)
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@localhost:1521/XEPDB1}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASS:guest}
+    listener:
+      simple:
+        acknowledge-mode: manual
+        default-requeue-rejected: false
+
+# Propiedad usada por CatalogClient.java (acepta CATALOG_SERVICE_URL o la antigua CATALOG_URL)
+catalog:
+  service:
+    url: ${CATALOG_SERVICE_URL:${CATALOG_URL:http://localhost:8081}}
+clients:
+  catalog-url: ${CATALOG_SERVICE_URL:${CATALOG_URL:http://localhost:8081}}
+
+# Nombres centralizados de RabbitMQ (12% Pauta EP3)
+app:
+  rabbitmq:
+    ordenes:
+      exchange: pedidos360.ordenes.exchange
+      queue: pedidos360.ordenes.notificaciones.queue
+      routing-key: pedidos360.ordenes.notificacion
+      dlx: pedidos360.ordenes.dlx
+      dlq: pedidos360.ordenes.notificaciones.dlq
+      dlq-routing-key: pedidos360.ordenes.dlq.key

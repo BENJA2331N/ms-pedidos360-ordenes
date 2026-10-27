@@ -36,6 +36,9 @@ class OrderServiceTest {
     @Mock
     private CatalogClient catalogClient;
 
+    @Mock
+    private com.pedidos360.orders.messaging.producer.OrderEventProducer orderEventProducer;
+
     @InjectMocks
     private OrderService orderService;
 

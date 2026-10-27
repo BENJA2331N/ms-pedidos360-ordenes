@@ -1,6 +1,7 @@
 package com.pedidos360.orders.service;
 
 import com.pedidos360.orders.dto.OrderItemRequestDTO;
+import com.pedidos360.orders.dto.OrderNotificationEventDTO;
 import com.pedidos360.orders.dto.OrderRequestDTO;
 import com.pedidos360.orders.dto.OrderResponseDTO;
 import com.pedidos360.orders.exception.InvalidStatusTransitionException;
@@ -8,6 +9,7 @@ import com.pedidos360.orders.exception.OrderNotFoundException;
 import com.pedidos360.orders.model.Order;
 import com.pedidos360.orders.model.OrderItem;
 import com.pedidos360.orders.model.OrderStatus;
+import com.pedidos360.orders.messaging.producer.OrderEventProducer;
 import com.pedidos360.orders.repository.OrderRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,10 +38,13 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final CatalogClient catalogClient;
+    private final OrderEventProducer orderEventProducer;
 
-    public OrderService(OrderRepository orderRepository, CatalogClient catalogClient) {
+    public OrderService(OrderRepository orderRepository, CatalogClient catalogClient,
+                        OrderEventProducer orderEventProducer) {
         this.orderRepository = orderRepository;
         this.catalogClient = catalogClient;
+        this.orderEventProducer = orderEventProducer;
     }
 
     /**
@@ -107,6 +112,13 @@ public class OrderService {
         Order saved = orderRepository.save(order);
         log.info("Pedido creado exitosamente con ID: {} para cliente: {}, total: {}",
                 saved.getId(), clienteId, saved.getTotal());
+
+        orderEventProducer.publicarEventoOrden(new OrderNotificationEventDTO(
+                saved.getId(),
+                saved.getEstado().name(),
+                "Ticket y notificación de nueva orden generados"
+        ));
+
         return OrderResponseDTO.fromEntity(saved);
     }
 
@@ -142,6 +154,12 @@ public class OrderService {
         order.setEstado(nuevoEstado);
         Order updated = orderRepository.save(order);
         log.info("Estado del pedido ID {} actualizado a: {}", id, nuevoEstado);
+
+        orderEventProducer.publicarEventoOrden(new OrderNotificationEventDTO(
+                updated.getId(),
+                updated.getEstado().name(),
+                "Notificación de cambio de estado de la orden a " + nuevoEstado.name()
+        ));
 
         return OrderResponseDTO.fromEntity(updated);
     }
