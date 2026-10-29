@@ -4,6 +4,7 @@ import com.pedidos360.orders.dto.StockUpdateDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -19,7 +20,7 @@ public class CatalogClient {
             RestClient.Builder restClientBuilder,
             @Value("${catalog.service.url:http://localhost:8081}") String catalogBaseUrl) {
         this.catalogBaseUrl = catalogBaseUrl;
-        this.restClient = restClientBuilder.build();
+        this.restClient = restClientBuilder.requestFactory(new JdkClientHttpRequestFactory()).build();
     }
 
     public void descontarStock(Long productoId, int cantidad) {
