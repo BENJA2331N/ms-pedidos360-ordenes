@@ -6,12 +6,12 @@ server:
 spring:
   application:
     name: ms-pedidos360-ordenes
-  # Base de datos Oracle (la misma que usaba application.properties)
+  # Base de datos (por defecto H2 en memoria si no se especifica DB_URL de Oracle)
   datasource:
-    url: ${DB_URL:jdbc:oracle:thin:@localhost:1521/XEPDB1}
-    username: ${DB_USER}
-    password: ${DB_PASSWORD}
-    driver-class-name: oracle.jdbc.OracleDriver
+    url: ${DB_URL:jdbc:h2:mem:ordersdb;DB_CLOSE_DELAY=-1;MODE=Oracle}
+    username: ${DB_USER:sa}
+    password: ${DB_PASSWORD:}
+    driver-class-name: ${DB_DRIVER:org.h2.Driver}
   jpa:
     hibernate:
       ddl-auto: update
