@@ -1,10 +1,13 @@
 package com.pedidos360.orders.service;
 
 import com.pedidos360.orders.dto.OrderItemRequestDTO;
+import com.pedidos360.orders.dto.OrderNotificationEventDTO;
 import com.pedidos360.orders.dto.OrderRequestDTO;
 import com.pedidos360.orders.dto.OrderResponseDTO;
+import com.pedidos360.orders.dto.OrderTicketEventDTO;
 import com.pedidos360.orders.exception.InvalidStatusTransitionException;
 import com.pedidos360.orders.exception.OrderNotFoundException;
+import com.pedidos360.orders.messaging.producer.OrderEventProducer;
 import com.pedidos360.orders.model.Order;
 import com.pedidos360.orders.model.OrderItem;
 import com.pedidos360.orders.model.OrderStatus;
@@ -19,7 +22,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,7 +39,7 @@ class OrderServiceTest {
     private CatalogClient catalogClient;
 
     @Mock
-    private com.pedidos360.orders.messaging.producer.OrderEventProducer orderEventProducer;
+    private OrderEventProducer orderEventProducer;
 
     @InjectMocks
     private OrderService orderService;
@@ -60,7 +62,7 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("Debe crear un pedido con estado inicial CREADO y calcular el total correctamente")
+    @DisplayName("Debe crear un pedido con estado inicial CREADO, calcular el total y publicar eventos de notificación y ticket")
     void testCreateOrder_Success() {
         OrderItemRequestDTO itemDto1 = new OrderItemRequestDTO(10L, 2, new BigDecimal("150.00"));
         OrderItemRequestDTO itemDto2 = new OrderItemRequestDTO(20L, 1, new BigDecimal("300.00"));
@@ -81,6 +83,8 @@ class OrderServiceTest {
         assertEquals(new BigDecimal("600.00"), response.getTotal());
         assertEquals(2, response.getItems().size());
         verify(orderRepository).save(any(Order.class));
+        verify(orderEventProducer).publicarNotificacionOrden(any(OrderNotificationEventDTO.class));
+        verify(orderEventProducer).publicarTicketOrden(any(OrderTicketEventDTO.class));
     }
 
     @Test
@@ -103,7 +107,7 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("Transición CREADO -> ACEPTADO: debe llamar a CatalogClient para descontar stock de cada item")
+    @DisplayName("Transición CREADO -> ACEPTADO: debe llamar a CatalogClient para descontar stock y emitir notificación + documento")
     void testTransition_CreadoToAceptado_CallsCatalog() {
         when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
@@ -114,6 +118,8 @@ class OrderServiceTest {
         verify(catalogClient).descontarStock(10L, 2);
         verify(catalogClient).descontarStock(20L, 1);
         verify(orderRepository).save(testOrder);
+        verify(orderEventProducer).publicarNotificacionOrden(any(OrderNotificationEventDTO.class));
+        verify(orderEventProducer).publicarTicketOrden(any(OrderTicketEventDTO.class));
     }
 
     @Test
@@ -127,6 +133,7 @@ class OrderServiceTest {
         assertEquals(OrderStatus.CANCELADO, updated.getEstado());
         verifyNoInteractions(catalogClient);
         verify(orderRepository).save(testOrder);
+        verify(orderEventProducer).publicarNotificacionOrden(any(OrderNotificationEventDTO.class));
     }
 
     @Test
@@ -163,6 +170,7 @@ class OrderServiceTest {
         OrderResponseDTO updated = orderService.updateStatus(1L, OrderStatus.ENTREGADO);
 
         assertEquals(OrderStatus.ENTREGADO, updated.getEstado());
+        verify(orderEventProducer).publicarTicketOrden(any(OrderTicketEventDTO.class));
     }
 
     @Test

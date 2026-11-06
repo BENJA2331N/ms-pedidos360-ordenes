@@ -4,12 +4,13 @@ import com.pedidos360.orders.dto.OrderItemRequestDTO;
 import com.pedidos360.orders.dto.OrderNotificationEventDTO;
 import com.pedidos360.orders.dto.OrderRequestDTO;
 import com.pedidos360.orders.dto.OrderResponseDTO;
+import com.pedidos360.orders.dto.OrderTicketEventDTO;
 import com.pedidos360.orders.exception.InvalidStatusTransitionException;
 import com.pedidos360.orders.exception.OrderNotFoundException;
+import com.pedidos360.orders.messaging.producer.OrderEventProducer;
 import com.pedidos360.orders.model.Order;
 import com.pedidos360.orders.model.OrderItem;
 import com.pedidos360.orders.model.OrderStatus;
-import com.pedidos360.orders.messaging.producer.OrderEventProducer;
 import com.pedidos360.orders.repository.OrderRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,9 +48,6 @@ public class OrderService {
         this.orderEventProducer = orderEventProducer;
     }
 
-    /**
-     * Listar todos los pedidos (para Operador / Admin).
-     */
     @Transactional(readOnly = true)
     public List<OrderResponseDTO> findAll() {
         return orderRepository.findAllByOrderByFechaCreacionDesc()
@@ -58,9 +56,6 @@ public class OrderService {
                 .toList();
     }
 
-    /**
-     * Listar pedidos de un cliente en específico (para Cliente).
-     */
     @Transactional(readOnly = true)
     public List<OrderResponseDTO> findByCliente(String clienteId) {
         if (clienteId == null || clienteId.isBlank()) {
@@ -72,9 +67,6 @@ public class OrderService {
                 .toList();
     }
 
-    /**
-     * Buscar un pedido por su identificador único.
-     */
     @Transactional(readOnly = true)
     public OrderResponseDTO findById(Long id) {
         Order order = orderRepository.findById(id)
@@ -82,9 +74,6 @@ public class OrderService {
         return OrderResponseDTO.fromEntity(order);
     }
 
-    /**
-     * Crear un nuevo pedido con estado inicial CREADO.
-     */
     public OrderResponseDTO create(OrderRequestDTO dto, String clienteId) {
         if (clienteId == null || clienteId.isBlank()) {
             throw new IllegalArgumentException("El identificador del cliente (clienteId) es obligatorio para crear el pedido.");
@@ -113,19 +102,24 @@ public class OrderService {
         log.info("Pedido creado exitosamente con ID: {} para cliente: {}, total: {}",
                 saved.getId(), clienteId, saved.getTotal());
 
-        orderEventProducer.publicarEventoOrden(new OrderNotificationEventDTO(
+        // Tareas asíncronas desacopladas por dominio: 1) Notificación al cliente, 2) Generación de ticket
+        orderEventProducer.publicarNotificacionOrden(new OrderNotificationEventDTO(
                 saved.getId(),
                 saved.getEstado().name(),
-                "Ticket y notificación de nueva orden generados"
+                "Notificación de nueva orden creada para cliente " + clienteId
+        ));
+        orderEventProducer.publicarTicketOrden(new OrderTicketEventDTO(
+                saved.getId(),
+                clienteId,
+                saved.getEstado().name(),
+                saved.getTotal(),
+                saved.getItems().size(),
+                "Comprobante de recepción de pedido #" + saved.getId()
         ));
 
         return OrderResponseDTO.fromEntity(saved);
     }
 
-    /**
-     * Actualizar el estado de un pedido según la máquina de estados.
-     * Si la transición es hacia ACEPTADO, descuenta stock de cada item en el catálogo.
-     */
     public OrderResponseDTO updateStatus(Long id, OrderStatus nuevoEstado) {
         if (nuevoEstado == null) {
             throw new IllegalArgumentException("El nuevo estado no puede ser nulo.");
@@ -142,7 +136,6 @@ public class OrderService {
             throw new InvalidStatusTransitionException(estadoActual, nuevoEstado);
         }
 
-        // Si la transición es hacia ACEPTADO -> llamar a CatalogClient para descontar stock de cada item
         if (nuevoEstado == OrderStatus.ACEPTADO) {
             log.info("Transición hacia ACEPTADO para pedido ID {}. Descontando stock en catálogo para {} items...",
                     id, order.getItems().size());
@@ -155,11 +148,22 @@ public class OrderService {
         Order updated = orderRepository.save(order);
         log.info("Estado del pedido ID {} actualizado a: {}", id, nuevoEstado);
 
-        orderEventProducer.publicarEventoOrden(new OrderNotificationEventDTO(
+        orderEventProducer.publicarNotificacionOrden(new OrderNotificationEventDTO(
                 updated.getId(),
                 updated.getEstado().name(),
                 "Notificación de cambio de estado de la orden a " + nuevoEstado.name()
         ));
+
+        if (nuevoEstado == OrderStatus.ACEPTADO || nuevoEstado == OrderStatus.ENTREGADO) {
+            orderEventProducer.publicarTicketOrden(new OrderTicketEventDTO(
+                    updated.getId(),
+                    updated.getClienteId(),
+                    updated.getEstado().name(),
+                    updated.getTotal(),
+                    updated.getItems().size(),
+                    "Documento electrónico de estado " + nuevoEstado.name() + " para pedido #" + updated.getId()
+            ));
+        }
 
         return OrderResponseDTO.fromEntity(updated);
     }

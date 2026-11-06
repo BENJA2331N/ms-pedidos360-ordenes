@@ -8,76 +8,148 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Configuración de RabbitMQ del dominio "órdenes". Todos los nombres se leen de application.yml
- * (app.rabbitmq.ordenes.*); aquí solo se declaran los beans, sin lógica de negocio.
+ * Configuración centralizada de RabbitMQ para el microservicio de órdenes.
+ * Declara un conjunto dedicado de beans {@link Exchange}, {@link Queue} y {@link Binding}
+ * (más su respectiva DLX y DLQ) para <b>cada caso de uso</b>, leyendo todos los nombres
+ * desde {@code application.yml} sin mezclar lógica de negocio.
  *
  * <pre>
- * Caso de uso: notificación / ticket de orden (creación y cambio de estado)
+ * Caso de uso 1 — Notificaciones de estado de orden:
+ *   OrderEventProducer --(notificaciones.routing-key)--> [notificaciones.exchange (direct)]
+ *                                                               |
+ *                                                               v
+ *                                                    [notificaciones.queue] --> OrderNotificationConsumer (ACK manual)
+ *                                                               |  (NACK requeue=false)
+ *                                                               v
+ *                                                    [notificaciones.dlx] ----> [notificaciones.dlq] --> OrderNotificationDlqConsumer
  *
- *   OrderEventProducer --routing-key--> [ordenes.exchange (direct)] --binding--> [ordenes.notificaciones.queue]
- *                                                                                  |  (NACK sin requeue / rechazo)
- *                                                                                  v  x-dead-letter-exchange + routing key
- *                                       [ordenes.dlx (direct)] --binding--> [ordenes.notificaciones.dlq]
- *
- *   Consumidor: OrderNotificationConsumer (cola principal con ACK manual y listener de la DLQ con logs)
+ * Caso de uso 2 — Generación asíncrona de tickets / comprobantes:
+ *   OrderEventProducer --(tickets.routing-key)---------> [tickets.exchange (direct)]
+ *                                                               |
+ *                                                               v
+ *                                                    [tickets.queue] ---------> OrderTicketConsumer (ACK manual)
+ *                                                               |  (NACK requeue=false)
+ *                                                               v
+ *                                                    [tickets.dlx] -----------> [tickets.dlq] ---------> OrderTicketDlqConsumer
  * </pre>
  */
 @Configuration
 public class RabbitMQConfig {
 
-    @Value("${app.rabbitmq.ordenes.exchange}")
-    private String ordenesExchange;
+    // ==================== Caso de uso 1: Notificaciones ====================
+    @Value("${app.rabbitmq.notificaciones.exchange}")
+    private String notificacionesExchangeName;
 
-    @Value("${app.rabbitmq.ordenes.queue}")
-    private String ordenesQueue;
+    @Value("${app.rabbitmq.notificaciones.queue}")
+    private String notificacionesQueueName;
 
-    @Value("${app.rabbitmq.ordenes.routing-key}")
-    private String ordenesRoutingKey;
+    @Value("${app.rabbitmq.notificaciones.routing-key}")
+    private String notificacionesRoutingKey;
 
-    @Value("${app.rabbitmq.ordenes.dlx}")
-    private String dlxExchange;
+    @Value("${app.rabbitmq.notificaciones.dlx}")
+    private String notificacionesDlxName;
 
-    @Value("${app.rabbitmq.ordenes.dlq}")
-    private String dlqQueue;
+    @Value("${app.rabbitmq.notificaciones.dlq}")
+    private String notificacionesDlqName;
 
-    @Value("${app.rabbitmq.ordenes.dlq-routing-key}")
-    private String dlqRoutingKey;
+    @Value("${app.rabbitmq.notificaciones.dlq-routing-key}")
+    private String notificacionesDlqRoutingKey;
+
+    // ==================== Caso de uso 2: Tickets ====================
+    @Value("${app.rabbitmq.tickets.exchange}")
+    private String ticketsExchangeName;
+
+    @Value("${app.rabbitmq.tickets.queue}")
+    private String ticketsQueueName;
+
+    @Value("${app.rabbitmq.tickets.routing-key}")
+    private String ticketsRoutingKey;
+
+    @Value("${app.rabbitmq.tickets.dlx}")
+    private String ticketsDlxName;
+
+    @Value("${app.rabbitmq.tickets.dlq}")
+    private String ticketsDlqName;
+
+    @Value("${app.rabbitmq.tickets.dlq-routing-key}")
+    private String ticketsDlqRoutingKey;
+
+    // -------------------- Beans Caso de Uso 1: Notificaciones --------------------
 
     @Bean
-    public DirectExchange ordenesDeadLetterExchange() {
-        return new DirectExchange(dlxExchange);
+    public DirectExchange notificacionesDeadLetterExchange() {
+        return new DirectExchange(notificacionesDlxName);
     }
 
     @Bean
-    public Queue ordenesDeadLetterQueue() {
-        return QueueBuilder.durable(dlqQueue).build();
+    public Queue notificacionesDeadLetterQueue() {
+        return QueueBuilder.durable(notificacionesDlqName).build();
     }
 
     @Bean
-    public Binding ordenesDlqBinding() {
-        return BindingBuilder.bind(ordenesDeadLetterQueue())
-                .to(ordenesDeadLetterExchange())
-                .with(dlqRoutingKey);
+    public Binding notificacionesDlqBinding() {
+        return BindingBuilder.bind(notificacionesDeadLetterQueue())
+                .to(notificacionesDeadLetterExchange())
+                .with(notificacionesDlqRoutingKey);
     }
 
     @Bean
-    public DirectExchange ordenesExchange() {
-        return new DirectExchange(ordenesExchange);
+    public DirectExchange notificacionesExchange() {
+        return new DirectExchange(notificacionesExchangeName);
     }
 
     @Bean
-    public Queue ordenesQueue() {
-        return QueueBuilder.durable(ordenesQueue)
-                .withArgument("x-dead-letter-exchange", dlxExchange)
-                .withArgument("x-dead-letter-routing-key", dlqRoutingKey)
+    public Queue notificacionesQueue() {
+        return QueueBuilder.durable(notificacionesQueueName)
+                .deadLetterExchange(notificacionesDlxName)
+                .deadLetterRoutingKey(notificacionesDlqRoutingKey)
                 .build();
     }
 
     @Bean
-    public Binding ordenesBinding() {
-        return BindingBuilder.bind(ordenesQueue())
-                .to(ordenesExchange())
-                .with(ordenesRoutingKey);
+    public Binding notificacionesBinding() {
+        return BindingBuilder.bind(notificacionesQueue())
+                .to(notificacionesExchange())
+                .with(notificacionesRoutingKey);
+    }
+
+    // -------------------- Beans Caso de Uso 2: Tickets --------------------
+
+    @Bean
+    public DirectExchange ticketsDeadLetterExchange() {
+        return new DirectExchange(ticketsDlxName);
+    }
+
+    @Bean
+    public Queue ticketsDeadLetterQueue() {
+        return QueueBuilder.durable(ticketsDlqName).build();
+    }
+
+    @Bean
+    public Binding ticketsDlqBinding() {
+        return BindingBuilder.bind(ticketsDeadLetterQueue())
+                .to(ticketsDeadLetterExchange())
+                .with(ticketsDlqRoutingKey);
+    }
+
+    @Bean
+    public DirectExchange ticketsExchange() {
+        return new DirectExchange(ticketsExchangeName);
+    }
+
+    @Bean
+    public Queue ticketsQueue() {
+        return QueueBuilder.durable(ticketsQueueName)
+                .deadLetterExchange(ticketsDlxName)
+                .deadLetterRoutingKey(ticketsDlqRoutingKey)
+                .build();
+    }
+
+    @Bean
+    public Binding ticketsBinding() {
+        return BindingBuilder.bind(ticketsQueue())
+                .to(ticketsExchange())
+                .with(ticketsRoutingKey);
     }
 
     @Bean

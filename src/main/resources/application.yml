@@ -37,13 +37,20 @@ catalog:
 clients:
   catalog-url: ${CATALOG_SERVICE_URL:${CATALOG_URL:http://localhost:8081}}
 
-# Nombres centralizados de RabbitMQ (12% Pauta EP3)
+# Nombres centralizados de RabbitMQ por caso de uso (sin strings acoplados en código)
 app:
   rabbitmq:
-    ordenes:
+    notificaciones:
       exchange: pedidos360.ordenes.exchange
       queue: pedidos360.ordenes.notificaciones.queue
       routing-key: pedidos360.ordenes.notificacion
       dlx: pedidos360.ordenes.dlx
       dlq: pedidos360.ordenes.notificaciones.dlq
       dlq-routing-key: pedidos360.ordenes.dlq.key
+    tickets:
+      exchange: pedidos360.ordenes.tickets.exchange
+      queue: pedidos360.ordenes.tickets.queue
+      routing-key: pedidos360.ordenes.ticket
+      dlx: pedidos360.ordenes.tickets.dlx
+      dlq: pedidos360.ordenes.tickets.dlq
+      dlq-routing-key: pedidos360.ordenes.tickets.dlq.key
