@@ -29,6 +29,19 @@ spring:
       simple:
         acknowledge-mode: manual
         default-requeue-rejected: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: pedidos360-grupo-streaming
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      enable-auto-commit: true
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        partitioner.class: com.pedidos360.orders.kafka.OrderKafkaPartitioner
 
 # Propiedad usada por CatalogClient.java (acepta CATALOG_SERVICE_URL o la antigua CATALOG_URL)
 catalog:
