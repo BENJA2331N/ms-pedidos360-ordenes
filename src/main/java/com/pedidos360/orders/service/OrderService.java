@@ -7,6 +7,8 @@ import com.pedidos360.orders.dto.OrderResponseDTO;
 import com.pedidos360.orders.dto.OrderTicketEventDTO;
 import com.pedidos360.orders.exception.InvalidStatusTransitionException;
 import com.pedidos360.orders.exception.OrderNotFoundException;
+import com.pedidos360.orders.kafka.dto.OrderStreamingEventDTO;
+import com.pedidos360.orders.kafka.producer.OrderKafkaProducer;
 import com.pedidos360.orders.messaging.producer.OrderEventProducer;
 import com.pedidos360.orders.model.Order;
 import com.pedidos360.orders.model.OrderItem;
@@ -14,6 +16,7 @@ import com.pedidos360.orders.model.OrderStatus;
 import com.pedidos360.orders.repository.OrderRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,12 +43,20 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final CatalogClient catalogClient;
     private final OrderEventProducer orderEventProducer;
+    private final OrderKafkaProducer orderKafkaProducer;
 
     public OrderService(OrderRepository orderRepository, CatalogClient catalogClient,
                         OrderEventProducer orderEventProducer) {
+        this(orderRepository, catalogClient, orderEventProducer, null);
+    }
+
+    @Autowired
+    public OrderService(OrderRepository orderRepository, CatalogClient catalogClient,
+                        OrderEventProducer orderEventProducer, OrderKafkaProducer orderKafkaProducer) {
         this.orderRepository = orderRepository;
         this.catalogClient = catalogClient;
         this.orderEventProducer = orderEventProducer;
+        this.orderKafkaProducer = orderKafkaProducer;
     }
 
     @Transactional(readOnly = true)
@@ -117,6 +128,18 @@ public class OrderService {
                 "Comprobante de recepción de pedido #" + saved.getId()
         ));
 
+        // Evento de streaming en Apache Kafka (sin alterar la mensajería previa de RabbitMQ)
+        if (orderKafkaProducer != null) {
+            orderKafkaProducer.publicarEventoOrden(new OrderStreamingEventDTO(
+                    saved.getId(),
+                    clienteId,
+                    saved.getEstado().name(),
+                    saved.getTotal(),
+                    saved.getItems().size(),
+                    "ms-pedidos360-ordenes"
+            ), true);
+        }
+
         return OrderResponseDTO.fromEntity(saved);
     }
 
@@ -163,6 +186,17 @@ public class OrderService {
                     updated.getItems().size(),
                     "Documento electrónico de estado " + nuevoEstado.name() + " para pedido #" + updated.getId()
             ));
+        }
+
+        if (orderKafkaProducer != null) {
+            orderKafkaProducer.publicarEventoOrden(new OrderStreamingEventDTO(
+                    updated.getId(),
+                    updated.getClienteId(),
+                    updated.getEstado().name(),
+                    updated.getTotal(),
+                    updated.getItems().size(),
+                    "ms-pedidos360-ordenes"
+            ), true);
         }
 
         return OrderResponseDTO.fromEntity(updated);

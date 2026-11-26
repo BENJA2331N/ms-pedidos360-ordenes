@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -8,6 +7,8 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+    networks:
+      - pedidos360-net
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -24,15 +25,45 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - pedidos360-net
+
+  kafka-topics-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: pedidos360-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic pedidos360.ordenes.eventos --partitions 3 --replication-factor 1 --config retention.ms=604800000 --config cleanup.policy=delete --config min.insync.replicas=1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic pedidos360.ordenes.eventos.DLT --partitions 3 --replication-factor 1 --config retention.ms=1209600000 --config cleanup.policy=delete
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic pedidos360.inventario.eventos --partitions 3 --replication-factor 1 --config retention.ms=259200000 --config cleanup.policy=compact,delete
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic pedidos360.inventario.eventos.DLT --partitions 3 --replication-factor 1 --config retention.ms=1209600000 --config cleanup.policy=delete
+    networks:
+      - pedidos360-net
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: pedidos360-kafka-ui
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     ports:
       - "8090:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: pedidos360-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - pedidos360-net
+
+networks:
+  pedidos360-net:
+    driver: bridge

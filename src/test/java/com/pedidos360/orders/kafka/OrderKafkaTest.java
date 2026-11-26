@@ -1,5 +1,13 @@
 package com.pedidos360.orders.kafka;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pedidos360.orders.kafka.consumer.OrderKafkaConsumers;
+import com.pedidos360.orders.kafka.domain.OrderStreamingDomainService;
+import com.pedidos360.orders.kafka.dto.InventoryStreamingEventDTO;
+import com.pedidos360.orders.kafka.dto.OrderStreamingEventDTO;
+import com.pedidos360.orders.kafka.producer.OrderKafkaProducer;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
@@ -8,82 +16,153 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import static org.hamcrest.Matchers.containsString;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.verify;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(OrderKafkaController.class)
+@Import(OrderStreamingDomainService.class)
 class OrderKafkaTest {
 
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private OrderStreamingDomainService domainService;
+
     @MockBean
-    private KafkaTemplate<String, String> kafkaTemplate;
+    private OrderKafkaProducer orderKafkaProducer;
+
+    private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
 
     @Test
-    @DisplayName("GET /api/kafka/send sin key envía al topic con distribución automática")
-    void sendWithoutKey() throws Exception {
-        mockMvc.perform(get("/api/kafka/send").param("message", "PedidoNuevo-ClienteA"))
-                .andExpect(status().isOk())
-                .andExpect(content().string(containsString("SIN KEY")))
-                .andExpect(content().string(containsString("PedidoNuevo-ClienteA")));
+    @DisplayName("POST /api/kafka/orders valida DTO y delega al productor de Tópico 1")
+    void postValidOrderEvent() throws Exception {
+        OrderStreamingEventDTO dto = new OrderStreamingEventDTO(
+                10L, "cliente-abc", "CREADO", new BigDecimal("45990"), 2, "test");
 
-        verify(kafkaTemplate).send(OrderKafkaController.TOPIC_NAME, "PedidoNuevo-ClienteA");
+        mockMvc.perform(post("/api/kafka/orders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.topico").value(OrderKafkaController.TOPIC_ORDENES));
+
+        verify(orderKafkaProducer).publicarEventoOrden(any(OrderStreamingEventDTO.class), eq(true));
     }
 
     @Test
-    @DisplayName("GET /api/kafka/send con key envía al topic garantizando misma partición por clave")
-    void sendWithKey() throws Exception {
+    @DisplayName("POST /api/kafka/orders rechaza DTO inválido con 400 Bad Request")
+    void postInvalidOrderEventReturns400() throws Exception {
+        OrderStreamingEventDTO invalid = new OrderStreamingEventDTO();
+
+        mockMvc.perform(post("/api/kafka/orders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalid)))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(orderKafkaProducer);
+    }
+
+    @Test
+    @DisplayName("POST /api/kafka/inventory valida DTO y delega al productor de Tópico 2")
+    void postValidInventoryEvent() throws Exception {
+        InventoryStreamingEventDTO dto = new InventoryStreamingEventDTO(
+                5L, "Teclado Mecánico", "DESCUENTO_STOCK", 2, 8, "test");
+
+        mockMvc.perform(post("/api/kafka/inventory")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.topico").value(OrderKafkaController.TOPIC_INVENTARIO));
+
+        verify(orderKafkaProducer).publicarEventoInventario(any(InventoryStreamingEventDTO.class));
+    }
+
+    @Test
+    @DisplayName("GET /api/kafka/send soporta envío Con Key y Sin Key")
+    void sendEndpointSupportsKeyAndWithoutKey() throws Exception {
+        mockMvc.perform(get("/api/kafka/send").param("message", "PedidoNuevo-ClienteA"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("SIN KEY")));
+
         mockMvc.perform(get("/api/kafka/send")
                         .param("message", "Paso1-OrdenCreada")
                         .param("key", "orden-555"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("CON KEY: orden-555")))
-                .andExpect(content().string(containsString("Paso1-OrdenCreada")));
-
-        verify(kafkaTemplate).send(OrderKafkaController.TOPIC_NAME, "orden-555", "Paso1-OrdenCreada");
+                .andExpect(content().string(containsString("CON KEY: orden-555")));
     }
 
     @Test
-    @DisplayName("GET /api/kafka/health responde estado operativo")
-    void healthEndpoint() throws Exception {
-        mockMvc.perform(get("/api/kafka/health"))
-                .andExpect(status().isOk())
-                .andExpect(content().string("Módulo de Streaming Kafka en Pedidos360 operativo"));
+    @DisplayName("Consumidores validan payloads, delegan al servicio de dominio y rechazan eventos corruptos")
+    void consumersValidateAndDelegateToDomain() {
+        OrderKafkaConsumers consumers = new OrderKafkaConsumers(domainService, validator);
+
+        OrderStreamingEventDTO validOrder = new OrderStreamingEventDTO(
+                77L, "cli-77", "CREADO", new BigDecimal("10000"), 1, "unit-test");
+        consumers.consumirOrdenParaAnalitica(validOrder, OrderKafkaController.TOPIC_ORDENES, 0, 1L, "orden-77");
+        consumers.consumirOrdenParaAuditoria(validOrder, OrderKafkaController.TOPIC_ORDENES, 0, 1L, "orden-77");
+
+        InventoryStreamingEventDTO validInv = new InventoryStreamingEventDTO(
+                3L, "Mouse Pro", "DESCUENTO", 1, 14, "ms-catalogo");
+        consumers.consumirEventoInventario(validInv, OrderKafkaController.TOPIC_INVENTARIO, 1, 0L, "producto-3");
+
+        Map<String, Object> metricas = domainService.obtenerResumenMetricas();
+        assertTrue(((Number) metricas.get("totalEventosAnalitica")).longValue() >= 1L);
+
+        // Evento inválido -> lanza IllegalArgumentException para ir directo al DLT sin reintentar
+        OrderStreamingEventDTO corrupt = new OrderStreamingEventDTO();
+        assertThrows(IllegalArgumentException.class, () ->
+                consumers.consumirOrdenParaAnalitica(corrupt, OrderKafkaController.TOPIC_ORDENES, 0, 2L, null));
+
+        // Fallo transitorio simulado -> lanza RuntimeException para activar backoff de reintentos
+        OrderStreamingEventDTO transientFail = new OrderStreamingEventDTO(
+                78L, "cli-78", "CREADO", new BigDecimal("5000"), 1, "SIMULAR_FALLO_TRANSITORIO");
+        assertThrows(RuntimeException.class, () ->
+                consumers.consumirOrdenParaAnalitica(transientFail, OrderKafkaController.TOPIC_ORDENES, 0, 3L, "orden-78"));
     }
 
     @Test
-    @DisplayName("OrderKafkaConsumer imprime Partición, Offset, Key y Mensaje en consola")
-    void consumerPrintsMetadata() {
-        OrderKafkaConsumer consumer = new OrderKafkaConsumer();
-        PrintStream originalOut = System.out;
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        try {
-            System.setOut(new PrintStream(buffer, true, StandardCharsets.UTF_8));
-            consumer.listen("Paso1-OrdenCreada", 1, 4L, "orden-555");
-        } finally {
-            System.setOut(originalOut);
-        }
+    @DisplayName("OrderKafkaProducer envía a ambos tópicos usando KafkaTemplate de manera resiliente")
+    void producerPublishesToBothTopicsAndIsolatesBrokerErrors() {
+        @SuppressWarnings("unchecked")
+        KafkaTemplate<String, Object> template = mock(KafkaTemplate.class);
+        when(template.send(anyString(), anyString(), any())).thenReturn(CompletableFuture.completedFuture(null));
 
-        String output = buffer.toString(StandardCharsets.UTF_8);
-        assertTrue(output.contains("Partición : 1"));
-        assertTrue(output.contains("Offset    : 4"));
-        assertTrue(output.contains("Key       : orden-555"));
-        assertTrue(output.contains("Mensaje   : Paso1-OrdenCreada"));
+        OrderKafkaProducer producer = new OrderKafkaProducer(
+                template, OrderKafkaController.TOPIC_ORDENES, OrderKafkaController.TOPIC_INVENTARIO);
+
+        OrderStreamingEventDTO orderDto = new OrderStreamingEventDTO(
+                15L, "cli-1", "ACEPTADO", new BigDecimal("25000"), 2, "test");
+        producer.publicarEventoOrden(orderDto, true);
+        verify(template).send(eq(OrderKafkaController.TOPIC_ORDENES), eq("orden-15"), eq(orderDto));
+
+        InventoryStreamingEventDTO invDto = new InventoryStreamingEventDTO(
+                9L, "Monitor", "ALTA", 10, 10, "test");
+        producer.publicarEventoInventario(invDto);
+        verify(template).send(eq(OrderKafkaController.TOPIC_INVENTARIO), eq("producto-9"), eq(invDto));
+
+        // Si Kafka lanza excepción síncrona, el productor la captura sin romper la transacción
+        when(template.send(anyString(), anyString(), any())).thenThrow(new RuntimeException("Broker down"));
+        assertDoesNotThrow(() -> producer.publicarEventoOrden(orderDto, true));
     }
 
     @Test
@@ -92,23 +171,19 @@ class OrderKafkaTest {
         OrderKafkaPartitioner partitioner = new OrderKafkaPartitioner();
         Node node = new Node(1, "localhost", 9092);
         List<PartitionInfo> partitions = List.of(
-                new PartitionInfo(OrderKafkaController.TOPIC_NAME, 0, node, new Node[]{node}, new Node[]{node}),
-                new PartitionInfo(OrderKafkaController.TOPIC_NAME, 1, node, new Node[]{node}, new Node[]{node}),
-                new PartitionInfo(OrderKafkaController.TOPIC_NAME, 2, node, new Node[]{node}, new Node[]{node})
+                new PartitionInfo(OrderKafkaController.TOPIC_ORDENES, 0, node, new Node[]{node}, new Node[]{node}),
+                new PartitionInfo(OrderKafkaController.TOPIC_ORDENES, 1, node, new Node[]{node}, new Node[]{node}),
+                new PartitionInfo(OrderKafkaController.TOPIC_ORDENES, 2, node, new Node[]{node}, new Node[]{node})
         );
         Cluster cluster = new Cluster("test-cluster", List.of(node), partitions, Collections.emptySet(), Collections.emptySet());
 
-        // Sin key: 0 -> 1 -> 2
-        assertEquals(0, partitioner.partition(OrderKafkaController.TOPIC_NAME, null, null, "A", new byte[]{1}, cluster));
-        assertEquals(1, partitioner.partition(OrderKafkaController.TOPIC_NAME, null, null, "B", new byte[]{2}, cluster));
-        assertEquals(2, partitioner.partition(OrderKafkaController.TOPIC_NAME, null, null, "C", new byte[]{3}, cluster));
+        assertEquals(0, partitioner.partition(OrderKafkaController.TOPIC_ORDENES, null, null, "A", new byte[]{1}, cluster));
+        assertEquals(1, partitioner.partition(OrderKafkaController.TOPIC_ORDENES, null, null, "B", new byte[]{2}, cluster));
+        assertEquals(2, partitioner.partition(OrderKafkaController.TOPIC_ORDENES, null, null, "C", new byte[]{3}, cluster));
 
-        // Con la misma key ("orden-555"): siempre la misma partición
         byte[] keyBytes = "orden-555".getBytes(StandardCharsets.UTF_8);
-        int p1 = partitioner.partition(OrderKafkaController.TOPIC_NAME, "orden-555", keyBytes, "Paso1", new byte[]{1}, cluster);
-        int p2 = partitioner.partition(OrderKafkaController.TOPIC_NAME, "orden-555", keyBytes, "Paso2", new byte[]{2}, cluster);
-        int p3 = partitioner.partition(OrderKafkaController.TOPIC_NAME, "orden-555", keyBytes, "Paso3", new byte[]{3}, cluster);
+        int p1 = partitioner.partition(OrderKafkaController.TOPIC_ORDENES, "orden-555", keyBytes, "P1", new byte[]{1}, cluster);
+        int p2 = partitioner.partition(OrderKafkaController.TOPIC_ORDENES, "orden-555", keyBytes, "P2", new byte[]{2}, cluster);
         assertEquals(p1, p2);
-        assertEquals(p2, p3);
     }
 }

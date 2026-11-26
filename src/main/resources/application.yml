@@ -32,16 +32,17 @@ spring:
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
-      group-id: pedidos360-grupo-streaming
+      group-id: pedidos360-ordenes-analitica-group
       auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      enable-auto-commit: true
+      enable-auto-commit: false
     producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
       properties:
         partitioner.class: com.pedidos360.orders.kafka.OrderKafkaPartitioner
+    listener:
+      ack-mode: record
+      missing-topics-fatal: false
 
 # Propiedad usada por CatalogClient.java (acepta CATALOG_SERVICE_URL o la antigua CATALOG_URL)
 catalog:
@@ -67,3 +68,24 @@ app:
       dlx: pedidos360.ordenes.tickets.dlx
       dlq: pedidos360.ordenes.tickets.dlq
       dlq-routing-key: pedidos360.ordenes.tickets.dlq.key
+  kafka:
+    topics:
+      ordenes-eventos:
+        name: ${KAFKA_TOPIC_ORDENES:pedidos360.ordenes.eventos}
+        dlt: ${KAFKA_TOPIC_ORDENES_DLT:pedidos360.ordenes.eventos.DLT}
+        partitions: 3
+        replicas: 1
+        retention-ms: 604800000
+        cleanup-policy: delete
+      inventario-eventos:
+        name: ${KAFKA_TOPIC_INVENTARIO:pedidos360.inventario.eventos}
+        dlt: ${KAFKA_TOPIC_INVENTARIO_DLT:pedidos360.inventario.eventos.DLT}
+        partitions: 3
+        replicas: 1
+        retention-ms: 259200000
+        cleanup-policy: compact,delete
+    groups:
+      analitica: pedidos360-ordenes-analitica-group
+      auditoria: pedidos360-ordenes-auditoria-group
+      inventario-sync: pedidos360-ordenes-inventario-sync-group
+      dlt: pedidos360-ordenes-dlt-group

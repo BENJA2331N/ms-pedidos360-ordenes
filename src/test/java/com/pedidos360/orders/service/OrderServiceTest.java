@@ -7,6 +7,8 @@ import com.pedidos360.orders.dto.OrderResponseDTO;
 import com.pedidos360.orders.dto.OrderTicketEventDTO;
 import com.pedidos360.orders.exception.InvalidStatusTransitionException;
 import com.pedidos360.orders.exception.OrderNotFoundException;
+import com.pedidos360.orders.kafka.dto.OrderStreamingEventDTO;
+import com.pedidos360.orders.kafka.producer.OrderKafkaProducer;
 import com.pedidos360.orders.messaging.producer.OrderEventProducer;
 import com.pedidos360.orders.model.Order;
 import com.pedidos360.orders.model.OrderItem;
@@ -40,6 +42,9 @@ class OrderServiceTest {
 
     @Mock
     private OrderEventProducer orderEventProducer;
+
+    @Mock
+    private OrderKafkaProducer orderKafkaProducer;
 
     @InjectMocks
     private OrderService orderService;
@@ -85,6 +90,7 @@ class OrderServiceTest {
         verify(orderRepository).save(any(Order.class));
         verify(orderEventProducer).publicarNotificacionOrden(any(OrderNotificationEventDTO.class));
         verify(orderEventProducer).publicarTicketOrden(any(OrderTicketEventDTO.class));
+        verify(orderKafkaProducer).publicarEventoOrden(any(OrderStreamingEventDTO.class), eq(true));
     }
 
     @Test
